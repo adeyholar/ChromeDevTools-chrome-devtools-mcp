@@ -119,13 +119,11 @@ export const mcpOptions = {
   experimentalFfmpegPath: {
     type: 'string',
     describe: 'Path to ffmpeg executable for screencast recording.',
-    implies: 'experimentalScreencast',
   },
   experimentalScreencastFps: {
     type: 'number',
     describe:
       'Frames per second to use for screencast recording. Lower values can reduce memory pressure on pages that produce frames faster than ffmpeg can encode them.',
-    implies: 'experimentalScreencast',
     coerce: (value: number | undefined) => {
       if (value === undefined) {
         return;
@@ -144,7 +142,7 @@ export const mcpOptions = {
     describe:
       "Restricts browser's network access by blocking specified URL patterns (uses https://urlpattern.spec.whatwg.org/). Silently detaches from targets with blocked URLs upon connection, and blocks runtime requests (including navigations and subresources). Accepts an array of patterns. A pattern that uses a regexp group in any component (for example `(127\\.\\d+\\.\\d+\\.\\d+)` in the hostname) is rejected, because it is not enforced on redirects or subresources; use an exact value or a `*`/`:name` wildcard instead.",
     coerce: (arg: string[] | undefined) => {
-      if (arg === undefined) {
+      if (arg === undefined || arg.length === 0) {
         return undefined;
       }
       const pattern = findUnenforceablePattern(arg);
@@ -164,6 +162,11 @@ export const mcpOptions = {
     coerce: (arg: string[] | undefined) => {
       if (arg === undefined) {
         return undefined;
+      }
+      if (arg.length === 0) {
+        throw new Error(
+          'Invalid --allowedUrlPattern: at least one pattern is required.',
+        );
       }
       const pattern = findUnenforceablePattern(arg);
       if (pattern) {
@@ -319,9 +322,20 @@ export const mcpOptions = {
   },
 } satisfies Record<string, YargsOptions>;
 
-export type ParsedArguments = ReturnType<typeof parseArguments>;
+type RawParsedArguments = ReturnType<
+  ReturnType<typeof buildCliParser<typeof mcpOptions>>['parseSync']
+>;
 
-export function getMcpOptionsForViaCli(): typeof mcpOptions {
+export type ParsedArguments = {
+  [
+    K in keyof RawParsedArguments as K extends '_' | '$0' ? never : K
+  ]: RawParsedArguments[K];
+};
+
+export function getMcpOptionsForViaCli(): Record<
+  keyof typeof mcpOptions,
+  YargsOptions
+> {
   if (!('default' in mcpOptions.headless)) {
     throw new Error('headless cli option unexpectedly does not have a default');
   }
@@ -363,9 +377,8 @@ export function getMcpOptionsForViaCli(): typeof mcpOptions {
 export function getCliOptions(): Partial<
   Record<keyof typeof mcpOptions, YargsOptions>
 > {
-  const options: Partial<Record<keyof typeof mcpOptions, YargsOptions>> = {
-    ...getMcpOptionsForViaCli(),
-  };
+  const options: Partial<Record<keyof typeof mcpOptions, YargsOptions>> =
+    withoutDefaults(getMcpOptionsForViaCli());
 
   // Missing CLI serialization.
   delete options.viewport;
@@ -373,19 +386,6 @@ export function getCliOptions(): Partial<
   // Change the defaults for the CLI.
   delete options.experimentalStructuredContent;
   delete options.experimentalInteropTools;
-
-  const recordOptions: Record<string, YargsOptions | undefined> = options;
-  for (const [key, option] of Object.entries(recordOptions)) {
-    if (option?.default !== undefined) {
-      const copy: YargsOptions = {
-        ...option,
-        defaultDescription:
-          option.defaultDescription ?? JSON.stringify(option.default),
-      };
-      delete copy.default;
-      recordOptions[key] = copy;
-    }
-  }
 
   return options;
 }
@@ -465,6 +465,13 @@ const CONFLICTING_ARGS: Array<Array<keyof typeof mcpOptions>> = [
   ['categoryExtensions', 'browserUrl', 'wsEndpoint'],
 ];
 
+const IMPLICATIONS: Array<[keyof typeof mcpOptions, keyof typeof mcpOptions]> =
+  [
+    ['wsHeaders', 'wsEndpoint'],
+    ['experimentalFfmpegPath', 'experimentalScreencast'],
+    ['experimentalScreencastFps', 'experimentalScreencast'],
+  ];
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -473,18 +480,13 @@ function getErrorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/**
- * Exported only for testing to not trigger process exit.
- */
-export function parser(
+export function buildCliParser<T extends Record<string, YargsOptions>>(
   version: string,
-  argv = process.argv,
-  env = process.env,
+  argv: string[],
+  options: T,
 ) {
-  const isViaCli = argv.includes('--viaCli') || argv.includes('--via-cli');
-  const options = isViaCli ? getMcpOptionsForViaCli() : mcpOptions;
-
-  const yargsInstance = yargs(hideBin(argv))
+  const yargsInstance = yargs(hideBin(argv));
+  return yargsInstance
     .scriptName('npx chrome-devtools-mcp@latest')
     .parserConfiguration({
       'strip-aliased': true,
@@ -492,126 +494,208 @@ export function parser(
     })
     .options(options)
     .showHelpOnFail(false, 'Specify --help for available options')
-    .check(args => {
-      const activeArgs = new Set<string>();
-
-      for (const [key, val] of Object.entries(args)) {
-        if (val !== undefined && val !== false) {
-          activeArgs.add(key);
-        }
-      }
-
-      for (const group of CONFLICTING_ARGS) {
-        // Find all active arguments within this conflict group
-        const activeInGroup = group.filter(arg => activeArgs.has(arg));
-
-        if (activeInGroup.length > 1) {
-          const [arg1, arg2] = activeInGroup;
-          throw new Error(
-            `Arguments ${arg1} and ${arg2} are mutually exclusive`,
-          );
-        }
-      }
-
-      return true;
-    })
-    .middleware(args => {
-      if (isViaCli) {
-        if (args.filesystemRoot === DEFAULT_FILESYSTEM_ROOT) {
-          const cliFilesystemArgs: {
-            allowUnrestrictedPaths?: boolean;
-            filesystemRoot?: unknown;
-          } = args;
-          cliFilesystemArgs.allowUnrestrictedPaths = true;
-          cliFilesystemArgs.filesystemRoot = undefined;
-        }
-        // Defaults that cannot be set in options without affecting yargs conflict resolution.
-        const connectsToExistingBrowser =
-          args.autoConnect || args.browserUrl || args.wsEndpoint;
-        if (
-          args.isolated === undefined &&
-          args.userDataDir === undefined &&
-          !connectsToExistingBrowser
-        ) {
-          args.isolated = true;
-        }
-        if (
-          args.categoryExtensions === undefined &&
-          !connectsToExistingBrowser
-        ) {
-          args.categoryExtensions = true;
-        }
-      }
-      // Only fall back to stable when Chrome is launched by channel. Leaving it
-      // unset otherwise keeps it out of telemetry (computeFlagUsage) for
-      // browserUrl, wsEndpoint and executablePath.
-      if (
-        !args.channel &&
-        !args.browserUrl &&
-        !args.wsEndpoint &&
-        !args.executablePath
-      ) {
-        args.channel = 'stable';
-      }
-      if (env['CI'] || env['CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS']) {
-        console.error(
-          "turning off usage statistics. process.env['CI'] || process.env['CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS'] is set.",
-        );
-        args.usageStatistics = false;
-      }
-
-      const cliOptionsAllowedArgs = [
-        ...Object.keys(options),
-        // Yargs populated with positional args
-        '_',
-        '$0',
-      ];
-
-      const unknownArgs = Object.keys(args).filter(
-        arg => !cliOptionsAllowedArgs.includes(arg),
-      );
-
-      if (unknownArgs.length > 0) {
-        console.error(
-          `Unknown arguments: ${unknownArgs.map(arg => `--${arg}`)}`,
-        );
-      }
-    })
-    .example(CLI_EXAMPLES);
-
-  return yargsInstance
-    .config('config', 'Path to JSON configuration file', configPath => {
-      try {
-        const parsed: unknown = JSON.parse(readFileSync(configPath, 'utf-8'));
-        if (!isPlainObject(parsed)) {
-          throw new Error('Config must be a JSON object');
-        }
-
-        yargs()
-          .parserConfiguration({
-            'strip-aliased': true,
-            'camel-case-expansion': false,
-          })
-          .options(options)
-          .config(parsed)
-          .strict()
-          .fail(false)
-          .exitProcess(false)
-          .parseSync([]);
-        return parsed;
-      } catch (err) {
-        throw new Error(`Invalid JSON config file: ${getErrorMessage(err)}`);
-      }
-    })
+    .example(CLI_EXAMPLES)
     .wrap(Math.min(120, yargsInstance.terminalWidth()))
     .help()
     .version(version);
+}
+
+function withoutDefaults(
+  options: Record<string, YargsOptions>,
+): Record<string, YargsOptions> {
+  const result: Record<string, YargsOptions> = {};
+  for (const [key, option] of Object.entries(options)) {
+    const copy: YargsOptions = {...option};
+    if (copy.default !== undefined) {
+      copy.defaultDescription ??= JSON.stringify(copy.default);
+      delete copy.default;
+    }
+    result[key] = copy;
+  }
+  return result;
+}
+
+function stripYargsPositionalArgs<T extends {_?: unknown; $0?: unknown}>(
+  parsed: T,
+): Omit<T, '_' | '$0'> {
+  const {_: _positionals, $0: _scriptName, ...rest} = parsed;
+  return rest;
+}
+
+/**
+ * Step 1: parses the CLI flags without applying defaults, so the result only
+ * contains what the user passed. `--help` and `--version` print and exit the
+ * process; parse errors throw.
+ */
+export function parseCliArgs(
+  version: string,
+  argv: string[],
+): Partial<ParsedArguments> {
+  const parsed = buildCliParser(version, argv, withoutDefaults(mcpOptions))
+    .fail(false)
+    .parseSync();
+  return stripYargsPositionalArgs(parsed);
+}
+
+/**
+ * Step 2: reads the JSON config file and runs it through yargs to reject
+ * unknown keys and apply coercions, without applying defaults.
+ */
+export function parseConfigFile(configPath: string): Partial<ParsedArguments> {
+  try {
+    const fileContent: unknown = JSON.parse(readFileSync(configPath, 'utf-8'));
+    if (!isPlainObject(fileContent)) {
+      throw new Error('Config must be a JSON object');
+    }
+    const parsed = yargs([])
+      .parserConfiguration({
+        'strip-aliased': true,
+        'camel-case-expansion': false,
+      })
+      .options(withoutDefaults(mcpOptions))
+      .config(fileContent)
+      .strict()
+      .fail(false)
+      .exitProcess(false)
+      .parseSync([]);
+    return stripYargsPositionalArgs(parsed);
+  } catch (err) {
+    throw new Error(`Invalid JSON config file: ${getErrorMessage(err)}`);
+  }
+}
+
+function warnUnknownArgs(cliArgs: Partial<ParsedArguments>): void {
+  const allowedArgs = new Set(Object.keys(mcpOptions));
+  const unknownArgs = Object.keys(cliArgs).filter(arg => !allowedArgs.has(arg));
+  if (unknownArgs.length > 0) {
+    console.error(`Unknown arguments: ${unknownArgs.map(arg => `--${arg}`)}`);
+  }
+}
+
+/**
+ * Step 4: rejects mutually exclusive inputs. Only explicit inputs are checked,
+ * so defaults never conflict.
+ */
+export function validateConflicts(
+  explicitArgs: Partial<ParsedArguments>,
+): void {
+  const activeArgs = new Set<string>();
+  for (const [key, val] of Object.entries(explicitArgs)) {
+    if (val !== undefined && val !== false) {
+      activeArgs.add(key);
+    }
+  }
+  for (const group of CONFLICTING_ARGS) {
+    const activeInGroup = group.filter(arg => activeArgs.has(arg));
+    if (activeInGroup.length > 1) {
+      const [arg1, arg2] = activeInGroup;
+      throw new Error(`Arguments ${arg1} and ${arg2} are mutually exclusive`);
+    }
+  }
+}
+
+export function validateImplications(
+  explicitArgs: Partial<ParsedArguments>,
+): void {
+  for (const [key, implied] of IMPLICATIONS) {
+    const isKeySet =
+      explicitArgs[key] !== undefined && explicitArgs[key] !== false;
+    const isImpliedSet =
+      explicitArgs[implied] !== undefined && explicitArgs[implied] !== false;
+    if (isKeySet && !isImpliedSet) {
+      throw new Error(`Implications failed:\n  ${key} -> ${implied}`);
+    }
+  }
+}
+
+/**
+ * Step 5: fills in defaults for everything that was not set explicitly.
+ * `viaCli` is an explicit input like any other; it selects which defaults
+ * apply.
+ */
+export function applyDefaults(
+  explicitArgs: Partial<ParsedArguments>,
+  env: NodeJS.ProcessEnv,
+): Partial<ParsedArguments> {
+  const isViaCli = explicitArgs.viaCli === true;
+  const baseOptions = isViaCli ? getMcpOptionsForViaCli() : mcpOptions;
+  const resolvedArgs = {...explicitArgs};
+  // `channel` only applies when Chrome is launched by channel. Leaving it
+  // unset otherwise keeps it out of telemetry (computeFlagUsage).
+  const launchesByChannel =
+    !explicitArgs.browserUrl &&
+    !explicitArgs.wsEndpoint &&
+    !explicitArgs.executablePath;
+
+  for (const [key, option] of Object.entries(baseOptions)) {
+    if (key === 'channel' && !launchesByChannel) {
+      continue;
+    }
+    if (resolvedArgs[key] === undefined && 'default' in option) {
+      resolvedArgs[key] = option.default;
+    }
+  }
+
+  if (isViaCli) {
+    if (resolvedArgs.filesystemRoot === DEFAULT_FILESYSTEM_ROOT) {
+      resolvedArgs.allowUnrestrictedPaths = true;
+      resolvedArgs.filesystemRoot = undefined;
+    }
+    const connectsToExistingBrowser =
+      resolvedArgs.autoConnect ||
+      resolvedArgs.browserUrl ||
+      resolvedArgs.wsEndpoint;
+    if (
+      explicitArgs.isolated === undefined &&
+      resolvedArgs.userDataDir === undefined &&
+      !connectsToExistingBrowser
+    ) {
+      resolvedArgs.isolated = true;
+    }
+    if (
+      resolvedArgs.categoryExtensions === undefined &&
+      !connectsToExistingBrowser
+    ) {
+      resolvedArgs.categoryExtensions = true;
+    }
+  }
+
+  if (env['CI'] || env['CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS']) {
+    console.error(
+      "turning off usage statistics. process.env['CI'] || process.env['CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS'] is set.",
+    );
+    resolvedArgs.usageStatistics = false;
+  }
+
+  return resolvedArgs;
 }
 
 export function parseArguments(
   version: string,
   argv = process.argv,
   env = process.env,
-) {
-  return parser(version, argv, env).parseSync();
+  exitProcess = true,
+): ParsedArguments {
+  try {
+    const cliArgs = parseCliArgs(version, argv);
+    const configFileArgs =
+      typeof cliArgs.config === 'string' ? parseConfigFile(cliArgs.config) : {};
+    // Step 3: merges the explicit inputs. The CLI wins over the config file.
+    const explicitArgs = {...configFileArgs, ...cliArgs};
+    warnUnknownArgs(cliArgs);
+    validateConflicts(explicitArgs);
+    validateImplications(explicitArgs);
+    const resolvedArgs = applyDefaults(explicitArgs, env);
+
+    // The merge and the default loop lose the static type that yargs infers from
+    // `mcpOptions`. Every value was produced by the same option definitions (CLI
+    // parser, strict config-file parser, option defaults), so the shape matches.
+    return resolvedArgs as ParsedArguments;
+  } catch (error) {
+    if (exitProcess) {
+      console.error(getErrorMessage(error));
+      process.exit(1);
+    }
+    throw error;
+  }
 }
