@@ -18,7 +18,6 @@ import {
   CONFLICTING_ARGS,
   IMPLICATIONS,
   DEFAULT_FILESYSTEM_ROOT,
-  type ParsedArguments,
 } from './mcp-options.js';
 
 export type ParsedArgumentsBase = Record<string, unknown>;
@@ -53,18 +52,20 @@ function stripYargsPositionalArgs<T extends {_?: unknown; $0?: unknown}>(
   return rest;
 }
 
-export class ConfigParser<OptionsT extends Record<string, YargsOptions>> {
-  constructor(
-    private version: string,
-    private options: OptionsT,
-    private viaCliOptions: OptionsT,
-    private examples: Array<[string, string]>,
-    private conflictingArgs: Array<Array<keyof OptionsT>>,
-    private implications: Array<[keyof OptionsT, keyof OptionsT]>,
-    private defaultFilesystemRoot: string[],
-  ) {}
+export type RawParsedArguments = ReturnType<
+  ReturnType<ConfigParser['buildCliParser']>['parseSync']
+>;
 
-  buildCliParser(argv: string[], options: OptionsT) {
+export type ParsedArguments = {
+  [
+    K in keyof RawParsedArguments as K extends '_' | '$0' ? never : K
+  ]: RawParsedArguments[K];
+};
+
+export class ConfigParser {
+  constructor(private version: string) {}
+
+  buildCliParser(argv: string[], options: typeof mcpOptions) {
     const yargsInstance = yargs(hideBin(argv));
     return yargsInstance
       .scriptName('npx chrome-devtools-mcp@latest')
@@ -74,7 +75,7 @@ export class ConfigParser<OptionsT extends Record<string, YargsOptions>> {
       })
       .options(options)
       .showHelpOnFail(false, 'Specify --help for available options')
-      .example(this.examples)
+      .example(CLI_EXAMPLES)
       .wrap(Math.min(120, yargsInstance.terminalWidth()))
       .help()
       .version(this.version);
@@ -83,7 +84,7 @@ export class ConfigParser<OptionsT extends Record<string, YargsOptions>> {
   parseCliArgs(argv: string[]): Record<string, unknown> {
     const parsed = this.buildCliParser(
       argv,
-      withoutDefaults(this.options) as unknown as OptionsT,
+      withoutDefaults(mcpOptions) as unknown as typeof mcpOptions,
     )
       .fail(false)
       .parseSync();
@@ -103,7 +104,7 @@ export class ConfigParser<OptionsT extends Record<string, YargsOptions>> {
           'strip-aliased': true,
           'camel-case-expansion': false,
         })
-        .options(withoutDefaults(this.options))
+        .options(withoutDefaults(mcpOptions))
         .config(fileContent)
         .strict()
         .fail(false)
@@ -116,7 +117,7 @@ export class ConfigParser<OptionsT extends Record<string, YargsOptions>> {
   }
 
   warnUnknownArgs(cliArgs: Record<string, unknown>): void {
-    const allowedArgs = new Set(Object.keys(this.options));
+    const allowedArgs = new Set(Object.keys(mcpOptions));
     const unknownArgs = Object.keys(cliArgs).filter(
       arg => !allowedArgs.has(arg),
     );
@@ -132,7 +133,7 @@ export class ConfigParser<OptionsT extends Record<string, YargsOptions>> {
         activeArgs.add(key);
       }
     }
-    for (const group of this.conflictingArgs) {
+    for (const group of CONFLICTING_ARGS) {
       const activeInGroup = group.filter(arg => activeArgs.has(arg as string));
       if (activeInGroup.length > 1) {
         const [arg1, arg2] = activeInGroup;
@@ -144,7 +145,7 @@ export class ConfigParser<OptionsT extends Record<string, YargsOptions>> {
   }
 
   validateImplications(explicitArgs: Record<string, unknown>): void {
-    for (const [key, implied] of this.implications) {
+    for (const [key, implied] of IMPLICATIONS) {
       const isKeySet =
         explicitArgs[key as keyof Record<string, unknown>] !== undefined &&
         explicitArgs[key as keyof Record<string, unknown>] !== false;
@@ -164,7 +165,7 @@ export class ConfigParser<OptionsT extends Record<string, YargsOptions>> {
     env: NodeJS.ProcessEnv,
   ): Record<string, unknown> {
     const isViaCli = (explicitArgs as Record<string, unknown>).viaCli === true;
-    const baseOptions = isViaCli ? this.viaCliOptions : this.options;
+    const baseOptions = isViaCli ? getMcpOptionsForViaCli() : mcpOptions;
     const resolvedArgs = {...explicitArgs} as Record<string, unknown>;
     // `channel` only applies when Chrome is launched by channel. Leaving it
     // unset otherwise keeps it out of telemetry (computeFlagUsage).
@@ -183,7 +184,7 @@ export class ConfigParser<OptionsT extends Record<string, YargsOptions>> {
     }
 
     if (isViaCli) {
-      if (resolvedArgs.filesystemRoot === this.defaultFilesystemRoot) {
+      if (resolvedArgs.filesystemRoot === DEFAULT_FILESYSTEM_ROOT) {
         resolvedArgs.allowUnrestrictedPaths = true;
         resolvedArgs.filesystemRoot = undefined;
       }
@@ -252,13 +253,9 @@ export function parseArguments(
   env = process.env,
   exitProcess = true,
 ): ParsedArguments {
-  return new ConfigParser<typeof mcpOptions>(
-    version,
-    mcpOptions,
-    getMcpOptionsForViaCli() as unknown as typeof mcpOptions,
-    CLI_EXAMPLES,
-    CONFLICTING_ARGS,
-    IMPLICATIONS,
-    DEFAULT_FILESYSTEM_ROOT,
-  ).parse(argv, env, exitProcess) as unknown as ParsedArguments;
+  return new ConfigParser(version).parse(
+    argv,
+    env,
+    exitProcess,
+  ) as unknown as ParsedArguments;
 }

@@ -11,17 +11,13 @@ import {describe, it} from 'node:test';
 import {buildCommand} from '../src/config/cli-commands.js';
 import {commands} from '../src/config/cli-options.js';
 import {
-  getMcpOptionsForViaCli,
-  CLI_EXAMPLES,
-  CONFLICTING_ARGS,
-  IMPLICATIONS,
-  DEFAULT_FILESYSTEM_ROOT,
   getCliOptions,
   mcpOptions,
   parseArguments as parseArgumentsImpl,
 } from '../src/config/mcp-options.js';
 import {computeFlagUsage} from '../src/telemetry/flagUtils.js';
 import {ConfigParser} from '../src/config/ConfigParser.js';
+import {DEFAULT_FILESYSTEM_ROOT} from '../src/config/mcp-options.js';
 
 import {createTempFile} from './utils.js';
 
@@ -752,15 +748,7 @@ describe('cli args parsing', () => {
   });
 
   it('includes usage examples in help output', async () => {
-    const parser = new ConfigParser(
-      '0.0.0',
-      mcpOptions,
-      getMcpOptionsForViaCli() as unknown as typeof mcpOptions,
-      CLI_EXAMPLES,
-      CONFLICTING_ARGS,
-      IMPLICATIONS,
-      DEFAULT_FILESYSTEM_ROOT,
-    );
+    const parser = new ConfigParser('0.0.0');
     const help = await parser
       .buildCliParser(
         ['node', 'main.js'],

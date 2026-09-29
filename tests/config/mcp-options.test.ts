@@ -9,29 +9,14 @@ import {afterEach, describe, it} from 'node:test';
 
 import sinon from 'sinon';
 
-import {
-  DEFAULT_FILESYSTEM_ROOT,
-  mcpOptions,
-  getMcpOptionsForViaCli,
-  CLI_EXAMPLES,
-  CONFLICTING_ARGS,
-  IMPLICATIONS,
-} from '../../src/config/mcp-options.js';
 import {ConfigParser} from '../../src/config/ConfigParser.js';
+import {DEFAULT_FILESYSTEM_ROOT} from '../../src/config/mcp-options.js';
 import {createTempFile} from '../utils.js';
 
 describe('mcp-options steps', () => {
   afterEach(() => sinon.restore());
 
-  const parser = new ConfigParser<typeof mcpOptions>(
-    '0.0.0',
-    mcpOptions,
-    getMcpOptionsForViaCli() as unknown as typeof mcpOptions,
-    CLI_EXAMPLES,
-    CONFLICTING_ARGS,
-    IMPLICATIONS,
-    DEFAULT_FILESYSTEM_ROOT,
-  );
+  const parser = new ConfigParser('0.0.0');
 
   describe('parseCliArgs', () => {
     it('returns only explicitly passed flags', () => {

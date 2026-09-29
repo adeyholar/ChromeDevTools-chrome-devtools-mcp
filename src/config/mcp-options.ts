@@ -1,4 +1,3 @@
-import type {ConfigParser} from './ConfigParser.js';
 // eslint-disable-next-line import/no-cycle
 import {withoutDefaults} from './ConfigParser.js';
 /**
@@ -323,18 +322,6 @@ export const mcpOptions = {
   },
 } satisfies Record<string, YargsOptions>;
 
-type RawParsedArguments = ReturnType<
-  ReturnType<
-    InstanceType<typeof ConfigParser<typeof mcpOptions>>['buildCliParser']
-  >['parseSync']
->;
-
-export type ParsedArguments = {
-  [
-    K in keyof RawParsedArguments as K extends '_' | '$0' ? never : K
-  ]: RawParsedArguments[K];
-};
-
 export function getMcpOptionsForViaCli(): Record<
   keyof typeof mcpOptions,
   YargsOptions
@@ -476,4 +463,4 @@ export const IMPLICATIONS: Array<
   ['experimentalScreencastFps', 'experimentalScreencast'],
 ];
 
-export {parseArguments} from './ConfigParser.js';
+export {parseArguments, type ParsedArguments} from './ConfigParser.js';
