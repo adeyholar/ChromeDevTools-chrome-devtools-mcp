@@ -20,7 +20,11 @@ describe('mcp-options steps', () => {
 
   describe('parseCliArgs', () => {
     it('returns only explicitly passed flags', () => {
-      const args = parser.parseCliArgs(['node', 'main.js', '--headless']);
+      const args = new ConfigParser('0.0.0', [
+        'node',
+        'main.js',
+        '--headless',
+      ]).parseCliArgs();
       assert.deepStrictEqual(args, {
         headless: true,
       });
@@ -123,7 +127,9 @@ describe('mcp-options steps', () => {
   });
   describe('applyDefaults', () => {
     it('keeps explicit values and fills in defaults', () => {
-      const args = parser.applyDefaults({headless: true}, {});
+      const args = new ConfigParser('0.0.0', [], {}).applyDefaults({
+        headless: true,
+      });
       assert.strictEqual(args.headless, true);
       assert.strictEqual(args.isolated, false);
       assert.strictEqual(args.channel, 'stable');
@@ -137,17 +143,17 @@ describe('mcp-options steps', () => {
     ]) {
       it(`does not default channel with ${Object.keys(explicitArgs)[0]}`, () => {
         assert.strictEqual(
-          parser.applyDefaults(explicitArgs, {}).channel,
+          new ConfigParser('0.0.0', [], {}).applyDefaults(explicitArgs).channel,
           undefined,
         );
       });
     }
 
     it('applies viaCli defaults when launching a browser', () => {
-      const args = parser.applyDefaults(
-        {viaCli: true, filesystemRoot: DEFAULT_FILESYSTEM_ROOT},
-        {},
-      );
+      const args = new ConfigParser('0.0.0', [], {}).applyDefaults({
+        viaCli: true,
+        filesystemRoot: DEFAULT_FILESYSTEM_ROOT,
+      });
       assert.strictEqual(args.headless, true);
       assert.strictEqual(args.isolated, true);
       assert.strictEqual(args.categoryExtensions, true);
@@ -156,17 +162,19 @@ describe('mcp-options steps', () => {
     });
 
     it('does not enable isolated or extensions for viaCli with browserUrl', () => {
-      const args = parser.applyDefaults(
-        {viaCli: true, browserUrl: 'http://localhost:9222'},
-        {},
-      );
+      const args = new ConfigParser('0.0.0', [], {}).applyDefaults({
+        viaCli: true,
+        browserUrl: 'http://localhost:9222',
+      });
       assert.strictEqual(args.isolated, false);
       assert.strictEqual(args.categoryExtensions, undefined);
     });
 
     it('turns off usage statistics in CI', () => {
       sinon.stub(console, 'error');
-      const args = parser.applyDefaults({usageStatistics: true}, {CI: 'true'});
+      const args = new ConfigParser('0.0.0', [], {CI: 'true'}).applyDefaults({
+        usageStatistics: true,
+      });
       assert.strictEqual(args.usageStatistics, false);
     });
   });

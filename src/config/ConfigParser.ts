@@ -63,10 +63,15 @@ export type ParsedArguments = {
 };
 
 export class ConfigParser {
-  constructor(private version: string) {}
+  constructor(
+    private version: string,
+    private argv = process.argv,
+    private env = process.env,
+    private exitProcess = true,
+  ) {}
 
-  buildCliParser(argv: string[], options: typeof mcpOptions) {
-    const yargsInstance = yargs(hideBin(argv));
+  buildCliParser(options: typeof mcpOptions) {
+    const yargsInstance = yargs(hideBin(this.argv));
     return yargsInstance
       .scriptName('npx chrome-devtools-mcp@latest')
       .parserConfiguration({
@@ -81,9 +86,8 @@ export class ConfigParser {
       .version(this.version);
   }
 
-  parseCliArgs(argv: string[]): Record<string, unknown> {
+  parseCliArgs(): Record<string, unknown> {
     const parsed = this.buildCliParser(
-      argv,
       withoutDefaults(mcpOptions) as unknown as typeof mcpOptions,
     )
       .fail(false)
@@ -162,7 +166,6 @@ export class ConfigParser {
 
   applyDefaults(
     explicitArgs: Record<string, unknown>,
-    env: NodeJS.ProcessEnv,
   ): Record<string, unknown> {
     const isViaCli = (explicitArgs as Record<string, unknown>).viaCli === true;
     const baseOptions = isViaCli ? getMcpOptionsForViaCli() : mcpOptions;
@@ -207,7 +210,7 @@ export class ConfigParser {
       }
     }
 
-    if (env['CI'] || env['CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS']) {
+    if (this.env['CI'] || this.env['CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS']) {
       console.error(
         "turning off usage statistics. process.env['CI'] || process.env['CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS'] is set.",
       );
@@ -217,13 +220,9 @@ export class ConfigParser {
     return resolvedArgs;
   }
 
-  parse(
-    argv = process.argv,
-    env = process.env,
-    exitProcess = true,
-  ): Record<string, unknown> {
+  parse(): Record<string, unknown> {
     try {
-      const cliArgs = this.parseCliArgs(argv);
+      const cliArgs = this.parseCliArgs();
       const configFileArgs =
         typeof (cliArgs as Record<string, unknown>).config === 'string'
           ? this.parseConfigFile(
@@ -234,11 +233,11 @@ export class ConfigParser {
       this.warnUnknownArgs(cliArgs);
       this.validateConflicts(explicitArgs);
       this.validateImplications(explicitArgs);
-      const resolvedArgs = this.applyDefaults(explicitArgs, env);
+      const resolvedArgs = this.applyDefaults(explicitArgs);
 
       return resolvedArgs as Record<string, unknown>;
     } catch (error) {
-      if (exitProcess) {
+      if (this.exitProcess) {
         console.error(getErrorMessage(error));
         process.exit(1);
       }
@@ -253,9 +252,10 @@ export function parseArguments(
   env = process.env,
   exitProcess = true,
 ): ParsedArguments {
-  return new ConfigParser(version).parse(
+  return new ConfigParser(
+    version,
     argv,
     env,
     exitProcess,
-  ) as unknown as ParsedArguments;
+  ).parse() as unknown as ParsedArguments;
 }

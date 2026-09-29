@@ -748,12 +748,9 @@ describe('cli args parsing', () => {
   });
 
   it('includes usage examples in help output', async () => {
-    const parser = new ConfigParser('0.0.0');
+    const parser = new ConfigParser('0.0.0', ['node', 'main.js']);
     const help = await parser
-      .buildCliParser(
-        ['node', 'main.js'],
-        mcpOptions as unknown as typeof mcpOptions,
-      )
+      .buildCliParser(mcpOptions as unknown as typeof mcpOptions)
       .getHelp();
     assert.match(help, /Examples:/);
     assert.match(help, /--browserUrl http:\/\/127\.0\.0\.1:9222/);
