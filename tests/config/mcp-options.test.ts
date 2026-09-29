@@ -10,21 +10,32 @@ import {afterEach, describe, it} from 'node:test';
 import sinon from 'sinon';
 
 import {
-  applyDefaults,
   DEFAULT_FILESYSTEM_ROOT,
-  parseCliArgs,
-  parseConfigFile,
-  validateConflicts,
-  validateImplications,
+  mcpOptions,
+  getMcpOptionsForViaCli,
+  CLI_EXAMPLES,
+  CONFLICTING_ARGS,
+  IMPLICATIONS,
 } from '../../src/config/mcp-options.js';
+import {ConfigParser} from '../../src/config/ConfigParser.js';
 import {createTempFile} from '../utils.js';
 
 describe('mcp-options steps', () => {
   afterEach(() => sinon.restore());
 
+  const parser = new ConfigParser<typeof mcpOptions>(
+    '0.0.0',
+    mcpOptions,
+    getMcpOptionsForViaCli() as unknown as typeof mcpOptions,
+    CLI_EXAMPLES,
+    CONFLICTING_ARGS,
+    IMPLICATIONS,
+    DEFAULT_FILESYSTEM_ROOT,
+  );
+
   describe('parseCliArgs', () => {
     it('returns only explicitly passed flags', () => {
-      const args = parseCliArgs('0.0.0', ['node', 'main.js', '--headless']);
+      const args = parser.parseCliArgs(['node', 'main.js', '--headless']);
       assert.deepStrictEqual(args, {
         headless: true,
       });
@@ -40,7 +51,7 @@ describe('mcp-options steps', () => {
         }),
         'cd4a.steps.config.json',
       );
-      const args = parseConfigFile(configFile.path);
+      const args = parser.parseConfigFile(configFile.path);
       assert.strictEqual(args.headless, true);
       assert.deepStrictEqual(args.blockedUrlPattern, ['https://a.com/*']);
       assert.strictEqual(args.isolated, undefined);
@@ -53,7 +64,7 @@ describe('mcp-options steps', () => {
         'cd4a.steps.config.unknown.json',
       );
       assert.throws(
-        () => parseConfigFile(configFile.path),
+        () => parser.parseConfigFile(configFile.path),
         /Invalid JSON config file: .*notAnOption/,
       );
     });
@@ -64,7 +75,7 @@ describe('mcp-options steps', () => {
         'cd4a.steps.config.array.json',
       );
       assert.throws(
-        () => parseConfigFile(configFile.path),
+        () => parser.parseConfigFile(configFile.path),
         /Invalid JSON config file: Config must be a JSON object/,
       );
     });
@@ -72,11 +83,11 @@ describe('mcp-options steps', () => {
 
   describe('validateConflicts', () => {
     it('accepts a single argument from a conflict group', () => {
-      validateConflicts({browserUrl: 'http://localhost:9222'});
+      parser.validateConflicts({browserUrl: 'http://localhost:9222'});
     });
 
     it('ignores false and undefined values', () => {
-      validateConflicts({
+      parser.validateConflicts({
         browserUrl: 'http://localhost:9222',
         wsEndpoint: undefined,
         categoryExtensions: false,
@@ -86,7 +97,7 @@ describe('mcp-options steps', () => {
     it('rejects two arguments from the same group', () => {
       assert.throws(
         () =>
-          validateConflicts({
+          parser.validateConflicts({
             browserUrl: 'http://localhost:9222',
             channel: 'canary',
           }),
@@ -96,11 +107,11 @@ describe('mcp-options steps', () => {
 
     describe('validateImplications', () => {
       it('accepts when implying key is not set', () => {
-        validateImplications({wsEndpoint: 'ws://localhost:9222'});
+        parser.validateImplications({wsEndpoint: 'ws://localhost:9222'});
       });
 
       it('accepts when both implying and implied keys are set', () => {
-        validateImplications({
+        parser.validateImplications({
           wsHeaders: {Auth: 'token'},
           wsEndpoint: 'ws://localhost:9222',
         });
@@ -108,7 +119,7 @@ describe('mcp-options steps', () => {
 
       it('rejects when implying key is set but implied key is missing', () => {
         assert.throws(
-          () => validateImplications({wsHeaders: {Auth: 'token'}}),
+          () => parser.validateImplications({wsHeaders: {Auth: 'token'}}),
           /Implications failed:\n {2}wsHeaders -> wsEndpoint/,
         );
       });
@@ -116,7 +127,7 @@ describe('mcp-options steps', () => {
       it('rejects when implying key is set but implied key is negated', () => {
         assert.throws(
           () =>
-            validateImplications({
+            parser.validateImplications({
               experimentalFfmpegPath: '/bin/ffmpeg',
               experimentalScreencast: false,
             }),
@@ -127,7 +138,7 @@ describe('mcp-options steps', () => {
   });
   describe('applyDefaults', () => {
     it('keeps explicit values and fills in defaults', () => {
-      const args = applyDefaults({headless: true}, {});
+      const args = parser.applyDefaults({headless: true}, {});
       assert.strictEqual(args.headless, true);
       assert.strictEqual(args.isolated, false);
       assert.strictEqual(args.channel, 'stable');
@@ -140,12 +151,15 @@ describe('mcp-options steps', () => {
       {executablePath: '/tmp/chrome'},
     ]) {
       it(`does not default channel with ${Object.keys(explicitArgs)[0]}`, () => {
-        assert.strictEqual(applyDefaults(explicitArgs, {}).channel, undefined);
+        assert.strictEqual(
+          parser.applyDefaults(explicitArgs, {}).channel,
+          undefined,
+        );
       });
     }
 
     it('applies viaCli defaults when launching a browser', () => {
-      const args = applyDefaults(
+      const args = parser.applyDefaults(
         {viaCli: true, filesystemRoot: DEFAULT_FILESYSTEM_ROOT},
         {},
       );
@@ -157,7 +171,7 @@ describe('mcp-options steps', () => {
     });
 
     it('does not enable isolated or extensions for viaCli with browserUrl', () => {
-      const args = applyDefaults(
+      const args = parser.applyDefaults(
         {viaCli: true, browserUrl: 'http://localhost:9222'},
         {},
       );
@@ -167,7 +181,7 @@ describe('mcp-options steps', () => {
 
     it('turns off usage statistics in CI', () => {
       sinon.stub(console, 'error');
-      const args = applyDefaults({usageStatistics: true}, {CI: 'true'});
+      const args = parser.applyDefaults({usageStatistics: true}, {CI: 'true'});
       assert.strictEqual(args.usageStatistics, false);
     });
   });
