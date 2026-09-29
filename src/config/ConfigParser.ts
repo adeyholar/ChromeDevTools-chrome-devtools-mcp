@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type {YargsOptions} from '../third_party/index.js';
+import type {YargsOptions, InferredOptionTypes} from '../third_party/index.js';
 
 import {yargs, hideBin} from '../third_party/index.js';
 
@@ -52,10 +52,7 @@ function stripYargsPositionalArgs<T extends {_?: unknown; $0?: unknown}>(
   return rest;
 }
 
-function _getRawArgs() {
-  return yargs([]).options(mcpOptions).parseSync();
-}
-export type RawParsedArguments = ReturnType<typeof _getRawArgs>;
+export type RawParsedArguments = InferredOptionTypes<typeof mcpOptions>;
 
 export type ParsedArguments = {
   [
