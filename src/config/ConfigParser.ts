@@ -52,9 +52,10 @@ function stripYargsPositionalArgs<T extends {_?: unknown; $0?: unknown}>(
   return rest;
 }
 
-export type RawParsedArguments = ReturnType<
-  ReturnType<ConfigParser['buildCliParser']>['parseSync']
->;
+function _getRawArgs() {
+  return yargs([]).options(mcpOptions).parseSync();
+}
+export type RawParsedArguments = ReturnType<typeof _getRawArgs>;
 
 export type ParsedArguments = {
   [
@@ -70,7 +71,9 @@ export class ConfigParser {
     private exitProcess = true,
   ) {}
 
-  buildCliParser(options: typeof mcpOptions) {
+  buildCliParser<O extends Record<string, YargsOptions> = typeof mcpOptions>(
+    options: O = mcpOptions as unknown as O,
+  ) {
     const yargsInstance = yargs(hideBin(this.argv));
     return yargsInstance
       .scriptName('npx chrome-devtools-mcp@latest')
@@ -86,16 +89,16 @@ export class ConfigParser {
       .version(this.version);
   }
 
-  parseCliArgs(): Record<string, unknown> {
+  parseCliArgs(): ParsedArguments {
     const parsed = this.buildCliParser(
       withoutDefaults(mcpOptions) as unknown as typeof mcpOptions,
     )
       .fail(false)
       .parseSync();
-    return stripYargsPositionalArgs(parsed) as Record<string, unknown>;
+    return stripYargsPositionalArgs(parsed) as unknown as ParsedArguments;
   }
 
-  parseConfigFile(configPath: string): Record<string, unknown> {
+  parseConfigFile(configPath: string): ParsedArguments {
     try {
       const fileContent: unknown = JSON.parse(
         readFileSync(configPath, 'utf-8'),
@@ -114,7 +117,7 @@ export class ConfigParser {
         .fail(false)
         .exitProcess(false)
         .parseSync([]);
-      return stripYargsPositionalArgs(parsed) as Record<string, unknown>;
+      return stripYargsPositionalArgs(parsed) as unknown as ParsedArguments;
     } catch (err) {
       throw new Error(`Invalid JSON config file: ${getErrorMessage(err)}`);
     }
@@ -164,9 +167,7 @@ export class ConfigParser {
     }
   }
 
-  applyDefaults(
-    explicitArgs: Record<string, unknown>,
-  ): Record<string, unknown> {
+  applyDefaults(explicitArgs: Record<string, unknown>): ParsedArguments {
     const isViaCli = (explicitArgs as Record<string, unknown>).viaCli === true;
     const baseOptions = isViaCli ? getMcpOptionsForViaCli() : mcpOptions;
     const resolvedArgs = {...explicitArgs} as Record<string, unknown>;
@@ -217,10 +218,10 @@ export class ConfigParser {
       resolvedArgs.usageStatistics = false;
     }
 
-    return resolvedArgs;
+    return resolvedArgs as unknown as ParsedArguments;
   }
 
-  parse(): Record<string, unknown> {
+  parse(): ParsedArguments {
     try {
       const cliArgs = this.parseCliArgs();
       const configFileArgs =
@@ -235,7 +236,7 @@ export class ConfigParser {
       this.validateImplications(explicitArgs);
       const resolvedArgs = this.applyDefaults(explicitArgs);
 
-      return resolvedArgs as Record<string, unknown>;
+      return resolvedArgs;
     } catch (error) {
       if (this.exitProcess) {
         console.error(getErrorMessage(error));
@@ -252,10 +253,5 @@ export function parseArguments(
   env = process.env,
   exitProcess = true,
 ): ParsedArguments {
-  return new ConfigParser(
-    version,
-    argv,
-    env,
-    exitProcess,
-  ).parse() as unknown as ParsedArguments;
+  return new ConfigParser(version, argv, env, exitProcess).parse();
 }
